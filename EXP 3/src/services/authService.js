@@ -1,8 +1,8 @@
 const USERS_KEY = "securespace.users";
 const SESSION_KEY = "securespace.session";
-const defaults = [{ id: "admin-1", username: "admin", password: "1234", name: "Alex Morgan", email: "alex@securespace.demo", role: "Administrator", joinedAt: "2026-01-10T10:00:00.000Z" }];
+const defaults = [{ id: "admin-1", username: "admin", password: "1234", name: "Alex Morgan", email: "alex@securespace.demo", role: "Admin", joinedAt: "2026-01-10T10:00:00.000Z" }, { id: "editor-1", username: "editor", password: "1234", name: "Jamie Patel", email: "jamie@securespace.demo", role: "Editor", joinedAt: "2026-02-15T10:00:00.000Z" }, { id: "viewer-1", username: "viewer", password: "1234", name: "Sam Lee", email: "sam@securespace.demo", role: "Viewer", joinedAt: "2026-03-02T10:00:00.000Z" }];
 
-const users = () => JSON.parse(localStorage.getItem(USERS_KEY) || JSON.stringify(defaults));
+const users = () => JSON.parse(localStorage.getItem(USERS_KEY) || JSON.stringify(defaults)).map((user) => ({ ...user, role: user.role === "Administrator" ? "Admin" : user.role === "Member" ? "Viewer" : user.role }));
 const saveUsers = (value) => localStorage.setItem(USERS_KEY, JSON.stringify(value));
 const makeToken = (user) => window.btoa(JSON.stringify({ sub: user.id, username: user.username, role: user.role }));
 
@@ -10,7 +10,7 @@ export function register({ name, email, username, password }) {
   const all = users();
   if (all.some((user) => user.username.toLowerCase() === username.trim().toLowerCase())) return { error: "That username is already in use." };
   if (all.some((user) => user.email.toLowerCase() === email.trim().toLowerCase())) return { error: "That email is already registered." };
-  const user = { id: crypto.randomUUID(), name: name.trim(), email: email.trim(), username: username.trim(), password, role: "Member", joinedAt: new Date().toISOString() };
+  const user = { id: crypto.randomUUID(), name: name.trim(), email: email.trim(), username: username.trim(), password, role: "Viewer", joinedAt: new Date().toISOString() };
   saveUsers([...all, user]);
   return createSession(user, false);
 }

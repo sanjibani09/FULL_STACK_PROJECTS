@@ -37,11 +37,11 @@ export default function CalendarView() {
 
     const eventWithPreference = { ...event, preferredStart: event.preferredStart || originalStart };
     reschedulePost(event.id, newStart, newEnd, eventWithPreference.preferredStart);
-    setScheduleInsight(getSchedulingInsight(eventWithPreference, newStart));
+    setScheduleInsight(getSchedulingInsight(eventWithPreference, newStart, posts));
   };
   // Keep a completed score visible while dragging. Some calendar libraries do not
   // emit a drop event when an item is returned to its original date.
-  const handleDragStart = ({ event }) => setScheduleInsight(getSchedulingInsight(event, event.start));
+  const handleDragStart = ({ event }) => setScheduleInsight(getSchedulingInsight(event, event.start, posts));
   const eventPropGetter = useCallback((event) => ({ style: { backgroundColor: event.color || '#6d5dfc', borderRadius: '6px', opacity: event.status === 'published' ? .7 : 1, color: 'white' } }), []);
   const title = moment(date).format(view === 'day' ? 'dddd, D MMMM' : 'MMMM YYYY');
   return <section className="calendar-wrapper" aria-label="Post scheduling calendar"><div className="calendar-toolbar"><div><h2 className="calendar-title">{title}</h2><p className="calendar-subtitle">{events.length} posts in your content plan</p></div><div className="calendar-actions"><div className="date-actions"><button onClick={() => setDate(new Date())}>Today</button><button aria-label="Previous period" onClick={() => setDate(moment(date).subtract(1, view).toDate())}>&lsaquo;</button><button aria-label="Next period" onClick={() => setDate(moment(date).add(1, view).toDate())}>&rsaquo;</button></div><div className="view-switcher">{Object.entries(viewLabels).map(([key, label]) => <button key={key} className={view === key ? 'active' : ''} onClick={() => setView(key)}>{label}</button>)}</div><button className="add-post" onClick={() => openCreate()}>+ New post</button></div></div><div className="calendar-body"><DnDCalendar localizer={localizer} events={events} startAccessor="start" endAccessor="end" selectable resizable popup toolbar={false} view={view} date={date} onView={setView} onNavigate={setDate} onDragStart={handleDragStart} onEventDrop={assessMove} onEventResize={assessMove} onSelectEvent={(event) => { setSelectedPost(event); setModalMode('edit'); }} onSelectSlot={({ start }) => openCreate(start)} eventPropGetter={eventPropGetter} /></div>{modalMode && <PostModal post={selectedPost} mode={modalMode} onClose={closeModal} onSave={handleSave} onDelete={(id) => { deletePost(id); closeModal(); }} />}</section>;

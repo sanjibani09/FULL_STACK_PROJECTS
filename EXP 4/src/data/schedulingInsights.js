@@ -1,26 +1,54 @@
-const PLATFORM_WINDOWS = {
-  Instagram: { days: [1, 2, 3, 4], start: 11, end: 14, alternative: '11 AM - 2 PM on a weekday' },
-  Twitter: { days: [1, 2, 3, 4, 5], start: 9, end: 12, alternative: '9 AM - 12 PM on a weekday' },
-  LinkedIn: { days: [2, 3, 4], start: 8, end: 11, alternative: 'Tuesday - Thursday, 8 AM - 11 AM' },
-  Facebook: { days: [1, 2, 3, 4, 5], start: 13, end: 16, alternative: '1 PM - 4 PM on a weekday' },
+const PLATFORM_PROFILES = {
+  Instagram: { idealHour: 12.5, days: [62, 86, 94, 100, 96, 82, 70], window: 'Tuesday - Thursday, 11 AM - 2 PM' },
+  Twitter: { idealHour: 10.5, days: [60, 88, 94, 96, 90, 78, 65], window: 'Tuesday - Thursday, 9 AM - 12 PM' },
+  LinkedIn: { idealHour: 9.5, days: [44, 90, 98, 100, 94, 76, 42], window: 'Tuesday - Thursday, 8 AM - 11 AM' },
+  Facebook: { idealHour: 14, days: [68, 84, 92, 94, 90, 80, 72], window: 'Tuesday - Thursday, 1 PM - 4 PM' },
 };
 
-export function getSchedulingInsight(post, start) {
+const clamp = (value) => Math.max(0, Math.min(100, Math.round(value)));
+
+export function getSchedulingInsight(post, start, allPosts = []) {
   const scheduledAt = new Date(start);
+  const profile = PLATFORM_PROFILES[post.platform] || PLATFORM_PROFILES.Instagram;
+  const hour = scheduledAt.getHours() + scheduledAt.getMinutes() / 60;
+  const dayScore = profile.days[scheduledAt.getDay()];
+  const timeScore = clamp(100 - Math.abs(hour - profile.idealHour) * 11);
+  const nearbyPosts = allPosts.filter((item) => {
+    if (item.id === post.id) return false;
+    const differenceInHours = Math.abs(new Date(item.start).getTime() - scheduledAt.getTime()) / 3600000;
+    return differenceInHours < 3;
+  });
+  const samePlatformPosts = nearbyPosts.filter((item) => item.platform === post.platform).length;
+  const capacityScore = clamp(100 - nearbyPosts.length * 16 - samePlatformPosts * 12);
   const preferredAt = post.preferredStart ? new Date(post.preferredStart) : null;
   const matchesPreferredDate = preferredAt && preferredAt.getFullYear() === scheduledAt.getFullYear() && preferredAt.getMonth() === scheduledAt.getMonth() && preferredAt.getDate() === scheduledAt.getDate();
-  if (matchesPreferredDate) {
-    return { ...post, scheduledAt, score: 'great', label: 'Good to go', message: 'This matches your original preferred publishing date.', alternative: 'Your saved preferred date', preference: 94 };
-  }
-  const window = PLATFORM_WINDOWS[post.platform] || PLATFORM_WINDOWS.Instagram;
-  const inDayRange = window.days.includes(scheduledAt.getDay());
-  const hour = scheduledAt.getHours() + scheduledAt.getMinutes() / 60;
-  const idealHour = (window.start + window.end) / 2;
-  const timeScore = Math.max(0, 100 - Math.abs(hour - idealHour) * 12);
-  const dayScore = inDayRange ? 100 : 20;
-  const preference = Math.round((timeScore * 0.6) + (dayScore * 0.4));
-  const score = preference >= 75 ? 'great' : preference >= 50 ? 'fair' : 'poor';
+  const preference = clamp(dayScore * 0.36 + timeScore * 0.44 + capacityScore * 0.2 + (matchesPreferredDate ? 5 : 0));
+  const score = preference >= 78 ? 'great' : preference >= 55 ? 'fair' : 'poor';
   const label = score === 'great' ? 'Good to go' : score === 'fair' ? 'Decent reach' : 'Consider a better time';
-  const message = score === 'great' ? `This is a strong engagement time for ${post.platform}.` : score === 'fair' ? `This is usable, but moving closer to the best window should improve reach.` : `This timing is unlikely to catch your audience at its most active.`;
-  return { ...post, scheduledAt, score, label, message, alternative: window.alternative, preference };
+  const weakestFactor = [
+    { name: 'day', value: dayScore },
+    { name: 'time', value: timeScore },
+    { name: 'capacity', value: capacityScore },
+  ].sort((a, b) => a.value - b.value)[0];
+  const message = score === 'great'
+    ? `This slot has a strong ${post.platform} audience pattern and a clear publishing window.`
+    : weakestFactor.name === 'capacity'
+      ? 'Nearby posts may compete for attention. Spacing this content out could improve reach.'
+      : weakestFactor.name === 'day'
+        ? `${scheduledAt.toLocaleDateString([], { weekday: 'long' })} is a weaker day for ${post.platform} engagement.`
+        : `This time is outside the usual high-attention period for ${post.platform}.`;
+  return {
+    ...post,
+    scheduledAt,
+    score,
+    label,
+    message,
+    alternative: profile.window,
+    preference,
+    factors: [
+      { label: 'Audience day', value: dayScore },
+      { label: 'Posting time', value: timeScore },
+      { label: 'Content spacing', value: capacityScore },
+    ],
+  };
 }

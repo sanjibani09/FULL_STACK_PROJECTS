@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { memo, useCallback, useState } from 'react';
 import { PLATFORM_COLORS } from '../data/samplePosts';
 
 function toLocalInputValue(date) {
@@ -7,15 +7,15 @@ function toLocalInputValue(date) {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
-export default function PostModal({ post, mode, onClose, onSave, onDelete }) {
+function PostModal({ post, mode, onClose, onSave, onDelete }) {
   const [form, setForm] = useState({ ...post, start: toLocalInputValue(post.start), end: toLocalInputValue(post.end) });
   const [error, setError] = useState('');
-  const handleChange = (field) => (event) => { setError(''); setForm((current) => ({ ...current, [field]: event.target.value })); };
-  const handleSubmit = (event) => {
+  const handleChange = useCallback((field) => (event) => { setError(''); setForm((current) => ({ ...current, [field]: event.target.value })); }, []);
+  const handleSubmit = useCallback((event) => {
     event.preventDefault();
     if (new Date(form.end) <= new Date(form.start)) { setError('End time must be later than the start time.'); return; }
     onSave({ ...post, ...form, start: new Date(form.start), end: new Date(form.end), color: PLATFORM_COLORS[form.platform] });
-  };
+  }, [form, onSave, post]);
   return (
     <div className="modal-backdrop" onClick={onClose}>
       <div className="modal" role="dialog" aria-modal="true" aria-labelledby="post-modal-title" onClick={(event) => event.stopPropagation()}>
@@ -33,3 +33,5 @@ export default function PostModal({ post, mode, onClose, onSave, onDelete }) {
     </div>
   );
 }
+
+export default memo(PostModal);

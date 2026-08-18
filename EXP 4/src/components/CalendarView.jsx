@@ -56,12 +56,16 @@ function CalendarView() {
 
   const handleDragStart = useCallback(({ event }) => setScheduleInsight(getSchedulingInsight(event, event.start, posts, event.end)), [posts, setScheduleInsight]);
 
-  const clashIds = useMemo(() => {
+    const clashIds = useMemo(() => {
     const clashing = new Set();
+    const isSameDay = (a, b) =>
+      a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
     for (let i = 0; i < posts.length; i++) {
       for (let j = i + 1; j < posts.length; j++) {
         const a = posts[i], b = posts[j];
-        if (new Date(a.start) < new Date(b.end) && new Date(b.start) < new Date(a.end)) {
+        const overlaps = new Date(a.start) < new Date(b.end) && new Date(b.start) < new Date(a.end);
+        const sameDay = isSameDay(new Date(a.start), new Date(b.start));
+        if (overlaps || sameDay) {
           clashing.add(a.id);
           clashing.add(b.id);
         }

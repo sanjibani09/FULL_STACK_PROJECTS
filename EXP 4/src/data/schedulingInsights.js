@@ -7,6 +7,12 @@ const PLATFORM_PROFILES = {
 
 const clamp = (value) => Math.max(0, Math.min(100, Math.round(value)));
 
+function isSameDay(dateA, dateB) {
+  return dateA.getFullYear() === dateB.getFullYear() &&
+    dateA.getMonth() === dateB.getMonth() &&
+    dateA.getDate() === dateB.getDate();
+}
+
 function rangesOverlap(startA, endA, startB, endB) {
   return startA < endB && startB < endA;
 }
@@ -21,9 +27,11 @@ export function getSchedulingInsight(post, start, allPosts = [], end) {
   const dayScore = profile.days[scheduledAt.getDay()];
   const timeScore = clamp(100 - Math.abs(hour - profile.idealHour) * 11);
 
+  // Any other post landing on the SAME DAY counts as a clash, not just exact time overlap
   const conflicts = allPosts.filter((item) => {
     if (item.id === post.id) return false;
-    return rangesOverlap(scheduledAt, scheduledEnd, new Date(item.start), new Date(item.end));
+    return isSameDay(scheduledAt, new Date(item.start)) ||
+      rangesOverlap(scheduledAt, scheduledEnd, new Date(item.start), new Date(item.end));
   });
 
   const nearbyPosts = allPosts.filter((item) => {
@@ -32,7 +40,7 @@ export function getSchedulingInsight(post, start, allPosts = [], end) {
     return differenceInHours < 3;
   });
   const samePlatformPosts = nearbyPosts.filter((item) => item.platform === post.platform).length;
-  const capacityScore = clamp(100 - nearbyPosts.length * 16 - samePlatformPosts * 12 - conflicts.length * 35);
+  const capacityScore = clamp(100 - nearbyPosts.length * 16 - samePlatformPosts * 12 - conflicts.length * 25);
 
   const preferredAt = post.preferredStart ? new Date(post.preferredStart) : null;
   const matchesPreferredDate = preferredAt && preferredAt.getFullYear() === scheduledAt.getFullYear() && preferredAt.getMonth() === scheduledAt.getMonth() && preferredAt.getDate() === scheduledAt.getDate();
@@ -40,7 +48,7 @@ export function getSchedulingInsight(post, start, allPosts = [], end) {
 
   const hasConflict = conflicts.length > 0;
   const score = hasConflict ? 'poor' : preference >= 78 ? 'great' : preference >= 55 ? 'fair' : 'poor';
-  const label = hasConflict ? 'Time slot clash' : score === 'great' ? 'Good to go' : score === 'fair' ? 'Decent reach' : 'Consider a better time';
+  const label = hasConflict ? `Clashes with ${conflicts.length} post${conflicts.length > 1 ? 's' : ''}` : score === 'great' ? 'Good to go' : score === 'fair' ? 'Decent reach' : 'Consider a better time';
 
   const weakestFactor = [
     { name: 'day', value: dayScore },
@@ -49,7 +57,7 @@ export function getSchedulingInsight(post, start, allPosts = [], end) {
   ].sort((a, b) => a.value - b.value)[0];
 
   const message = hasConflict
-    ? `This overlaps with "${conflicts[0].title}". Move one of them to avoid a clash.`
+    ? `This shares a day with: ${conflicts.map((c) => c.title).join(', ')}.`
     : score === 'great'
       ? `This slot has a strong ${post.platform} audience pattern and a clear publishing window.`
       : weakestFactor.name === 'capacity'

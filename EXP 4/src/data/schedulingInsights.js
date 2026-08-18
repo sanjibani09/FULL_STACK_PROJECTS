@@ -7,44 +7,68 @@ const PLATFORM_PROFILES = {
 
 const clamp = (value) => Math.max(0, Math.min(100, Math.round(value)));
 
-export function getSchedulingInsight(post, start, allPosts = []) {
+function rangesOverlap(startA, endA, startB, endB) {
+  return startA < endB && startB < endA;
+}
+
+export function getSchedulingInsight(post, start, allPosts = [], end) {
   const scheduledAt = new Date(start);
+  const duration = new Date(post.end).getTime() - new Date(post.start).getTime();
+  const scheduledEnd = end ? new Date(end) : new Date(scheduledAt.getTime() + (duration || 30 * 60000));
+
   const profile = PLATFORM_PROFILES[post.platform] || PLATFORM_PROFILES.Instagram;
   const hour = scheduledAt.getHours() + scheduledAt.getMinutes() / 60;
   const dayScore = profile.days[scheduledAt.getDay()];
   const timeScore = clamp(100 - Math.abs(hour - profile.idealHour) * 11);
+
+  const conflicts = allPosts.filter((item) => {
+    if (item.id === post.id) return false;
+    return rangesOverlap(scheduledAt, scheduledEnd, new Date(item.start), new Date(item.end));
+  });
+
   const nearbyPosts = allPosts.filter((item) => {
     if (item.id === post.id) return false;
     const differenceInHours = Math.abs(new Date(item.start).getTime() - scheduledAt.getTime()) / 3600000;
     return differenceInHours < 3;
   });
   const samePlatformPosts = nearbyPosts.filter((item) => item.platform === post.platform).length;
-  const capacityScore = clamp(100 - nearbyPosts.length * 16 - samePlatformPosts * 12);
+  const capacityScore = clamp(100 - nearbyPosts.length * 16 - samePlatformPosts * 12 - conflicts.length * 35);
+
   const preferredAt = post.preferredStart ? new Date(post.preferredStart) : null;
   const matchesPreferredDate = preferredAt && preferredAt.getFullYear() === scheduledAt.getFullYear() && preferredAt.getMonth() === scheduledAt.getMonth() && preferredAt.getDate() === scheduledAt.getDate();
   const preference = clamp(dayScore * 0.36 + timeScore * 0.44 + capacityScore * 0.2 + (matchesPreferredDate ? 5 : 0));
-  const score = preference >= 78 ? 'great' : preference >= 55 ? 'fair' : 'poor';
-  const label = score === 'great' ? 'Good to go' : score === 'fair' ? 'Decent reach' : 'Consider a better time';
+
+  const hasConflict = conflicts.length > 0;
+  const score = hasConflict ? 'poor' : preference >= 78 ? 'great' : preference >= 55 ? 'fair' : 'poor';
+  const label = hasConflict ? 'Time slot clash' : score === 'great' ? 'Good to go' : score === 'fair' ? 'Decent reach' : 'Consider a better time';
+
   const weakestFactor = [
     { name: 'day', value: dayScore },
     { name: 'time', value: timeScore },
     { name: 'capacity', value: capacityScore },
   ].sort((a, b) => a.value - b.value)[0];
-  const message = score === 'great'
-    ? `This slot has a strong ${post.platform} audience pattern and a clear publishing window.`
-    : weakestFactor.name === 'capacity'
-      ? 'Nearby posts may compete for attention. Spacing this content out could improve reach.'
-      : weakestFactor.name === 'day'
-        ? `${scheduledAt.toLocaleDateString([], { weekday: 'long' })} is a weaker day for ${post.platform} engagement.`
-        : `This time is outside the usual high-attention period for ${post.platform}.`;
+
+  const message = hasConflict
+    ? `This overlaps with "${conflicts[0].title}". Move one of them to avoid a clash.`
+    : score === 'great'
+      ? `This slot has a strong ${post.platform} audience pattern and a clear publishing window.`
+      : weakestFactor.name === 'capacity'
+        ? 'Nearby posts may compete for attention. Spacing this content out could improve reach.'
+        : weakestFactor.name === 'day'
+          ? `${scheduledAt.toLocaleDateString([], { weekday: 'long' })} is a weaker day for ${post.platform} engagement.`
+          : `This time is outside the usual high-attention period for ${post.platform}.`;
+
   return {
     ...post,
     scheduledAt,
+    scheduledEnd,
     score,
     label,
     message,
     alternative: profile.window,
     preference,
+    hasConflict,
+    conflicts,
     factors: [
       { label: 'Audience day', value: dayScore },
       { label: 'Posting time', value: timeScore },

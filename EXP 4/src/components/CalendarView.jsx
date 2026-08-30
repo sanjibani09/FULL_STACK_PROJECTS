@@ -1,4 +1,4 @@
-import { memo, useCallback, useMemo, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Calendar, momentLocalizer } from 'react-big-calendar';
 import dndModule from 'react-big-calendar/lib/addons/dragAndDrop';
 import moment from 'moment';
@@ -12,14 +12,40 @@ const localizer = momentLocalizer(moment);
 const DnDCalendar = (dndModule.default || dndModule)(Calendar);
 const viewLabels = { month: 'Month', week: 'Week', day: 'Day' };
 
+function OptimizedEvent({ event }) {
+  return <span className="optimized-event"><span>{event.title}</span>{event.optimization && <b className={event.optimization.score}>{event.optimization.preference}</b>}</span>;
+}
+
+function buildOptimization(posts) {
+  const results = posts.map((post) => getSchedulingInsight(post, post.start, posts, post.end));
+  return {
+    results,
+    summary: {
+      average: results.length ? Math.round(results.reduce((total, result) => total + result.preference, 0) / results.length) : 0,
+      great: results.filter((result) => result.score === 'great').length,
+      fair: results.filter((result) => result.score === 'fair').length,
+      poor: results.filter((result) => result.score === 'poor').length,
+    },
+  };
+}
+
 function CalendarView() {
   const { posts, reschedulePost, updatePost, deletePost, addPost } = usePosts();
-  const { setScheduleInsight } = useScheduleInsight();
+  const { setScheduleInsight, calendarOptimization, setCalendarOptimization } = useScheduleInsight();
   const [selectedPost, setSelectedPost] = useState(null);
   const [modalMode, setModalMode] = useState(null);
   const [view, setView] = useState('month');
   const [date, setDate] = useState(new Date());
-  const events = useMemo(() => posts.map((post) => ({ ...post, title: post.title })), [posts]);
+  const optimizationTimer = useRef(null);
+  const optimizationById = useMemo(() => new Map(calendarOptimization.results.map((result) => [result.id, result])), [calendarOptimization.results]);
+  const events = useMemo(() => posts.map((post) => ({ ...post, title: post.title, optimization: calendarOptimization.enabled && !calendarOptimization.analyzing ? optimizationById.get(post.id) : null })), [calendarOptimization.analyzing, calendarOptimization.enabled, optimizationById, posts]);
+
+  useEffect(() => () => window.clearTimeout(optimizationTimer.current), []);
+  useEffect(() => {
+    if (!calendarOptimization.enabled || calendarOptimization.analyzing) return;
+    const { results, summary } = buildOptimization(posts);
+    setCalendarOptimization({ enabled: true, analyzing: false, results, summary });
+  }, [calendarOptimization.analyzing, calendarOptimization.enabled, posts, setCalendarOptimization]);
 
   const openCreate = useCallback((start = new Date()) => {
     const end = new Date(start);
@@ -55,6 +81,19 @@ function CalendarView() {
   }, [posts, reschedulePost, setScheduleInsight, view]);
 
   const handleDragStart = useCallback(({ event }) => setScheduleInsight(getSchedulingInsight(event, event.start, posts, event.end)), [posts, setScheduleInsight]);
+
+  const toggleOptimization = useCallback(() => {
+    if (calendarOptimization.enabled) {
+      window.clearTimeout(optimizationTimer.current);
+      setCalendarOptimization({ enabled: false, analyzing: false, results: [], summary: null });
+      return;
+    }
+    setCalendarOptimization({ enabled: true, analyzing: true, results: [], summary: null });
+    optimizationTimer.current = window.setTimeout(() => {
+      const { results, summary } = buildOptimization(posts);
+      setCalendarOptimization({ enabled: true, analyzing: false, results, summary });
+    }, 500);
+  }, [calendarOptimization.enabled, posts, setCalendarOptimization]);
 
     const clashIds = useMemo(() => {
     const clashing = new Set();
@@ -109,6 +148,9 @@ function CalendarView() {
             ))}
           </div>
           <button className="add-post" onClick={() => openCreate()}>+ New post</button>
+          <button className={`optimize-toggle ${calendarOptimization.enabled ? 'enabled' : ''} ${calendarOptimization.analyzing ? 'analyzing' : ''}`} onClick={toggleOptimization} aria-pressed={calendarOptimization.enabled}>
+            <i aria-hidden="true" />{calendarOptimization.analyzing ? 'Analyzing...' : calendarOptimization.enabled ? 'Optimization on' : 'Optimize calendar'}
+          </button>
         </div>
       </div>
       <div className="calendar-body">
@@ -134,6 +176,7 @@ function CalendarView() {
           onSelectEvent={selectEvent}
           onSelectSlot={selectSlot}
           eventPropGetter={eventPropGetter}
+          components={{ event: OptimizedEvent }}
         />
       </div>
       {modalMode && <PostModal post={selectedPost} mode={modalMode} onClose={closeModal} onSave={handleSave} onDelete={deleteAndClose} />}

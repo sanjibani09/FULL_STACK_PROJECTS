@@ -24,6 +24,7 @@ function loadInitial() {
 export function PostProvider({ children }) {
   const [posts, dispatch] = useReducer(postReducer, undefined, loadInitial);
   const [scheduleInsight, setScheduleInsight] = useState(null);
+  const [calendarOptimization, setCalendarOptimization] = useState({ enabled: false, analyzing: false, results: [], summary: null });
 
   useEffect(() => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(posts));
@@ -36,7 +37,7 @@ export function PostProvider({ children }) {
     dispatch({ type: ACTIONS.RESCHEDULE_POST, payload: { id, start, end, preferredStart } }), []);
 
   const postsValue = useMemo(() => ({ posts, addPost, updatePost, deletePost, reschedulePost }), [posts, addPost, updatePost, deletePost, reschedulePost]);
-  const insightValue = useMemo(() => ({ scheduleInsight, setScheduleInsight }), [scheduleInsight]);
+  const insightValue = useMemo(() => ({ scheduleInsight, setScheduleInsight, calendarOptimization, setCalendarOptimization }), [calendarOptimization, scheduleInsight]);
 
   return (
     <PostContext.Provider value={postsValue}>

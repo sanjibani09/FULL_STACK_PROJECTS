@@ -3,13 +3,18 @@ import { usePosts, useScheduleInsight } from '../context/PostContext';
 
 function Sidebar() {
   const { posts } = usePosts();
-  const { scheduleInsight } = useScheduleInsight();
+  const { scheduleInsight, calendarOptimization } = useScheduleInsight();
   const [activeStatus, setActiveStatus] = useState(null);
   const upcoming = useMemo(() => { const today = new Date(); today.setHours(0, 0, 0, 0); return [...posts].filter((post) => new Date(post.start) >= today).sort((a, b) => new Date(a.start) - new Date(b.start)).slice(0, 8); }, [posts]);
   const selectedPosts = useMemo(() => activeStatus ? posts.filter((post) => post.status === activeStatus).sort((a, b) => new Date(a.start) - new Date(b.start)) : [], [activeStatus, posts]);
   const statusCounts = useMemo(() => posts.reduce((counts, post) => ({ ...counts, [post.status]: (counts[post.status] || 0) + 1 }), { draft: 0, scheduled: 0, published: 0 }), [posts]);
   const showStatus = useCallback((event) => setActiveStatus(event.currentTarget.dataset.status), []);
   return <aside className="sidebar">
+    {calendarOptimization.enabled && <section className={`calendar-health ${calendarOptimization.analyzing ? 'analyzing' : ''}`} aria-live="polite">
+      <div><p>Calendar health</p><strong>{calendarOptimization.analyzing ? 'Scanning' : `${calendarOptimization.summary?.average || 0}%`}</strong></div>
+      <span className="health-light" aria-hidden="true" />
+      <p>{calendarOptimization.analyzing ? 'Reviewing time windows and post spacing...' : `${calendarOptimization.summary?.great || 0} strong slots, ${calendarOptimization.summary?.fair || 0} workable, ${calendarOptimization.summary?.poor || 0} need attention.`}</p>
+    </section>}
     <section className={`preference-meter ${scheduleInsight ? scheduleInsight.score : 'idle'} ${scheduleInsight?.isDragging ? 'analyzing' : ''}`} aria-live="polite"><div className="meter-heading"><p>Schedule preference</p><strong>{scheduleInsight ? `${scheduleInsight.preference}%` : '--'}</strong></div><div className="meter-track" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow={scheduleInsight?.preference || 0}><div className="meter-fill" style={{ width: `${scheduleInsight?.preference || 0}%` }} /></div>{scheduleInsight ? <><div className="meter-result"><span>{scheduleInsight.label}</span><time>{scheduleInsight.scheduledAt.toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' })}</time></div><p className="meter-copy">{scheduleInsight.message}</p><div className="insight-factors">{scheduleInsight.factors.map((factor) => <div className="insight-factor" key={factor.label}><div><span>{factor.label}</span><b>{factor.value}</b></div><i><em style={{ width: `${factor.value}%` }} /></i></div>)}</div><small>Best window: {scheduleInsight.alternative}</small></> : <p className="meter-copy">Drag a post to see how preferable its new time is.</p>}</section>
     <div className="sidebar-heading"><h2>Upcoming posts</h2><span className="post-count">{upcoming.length}</span></div>
     <div className="schedule-summary" aria-label="Post status summary"><button className="summary-item scheduled-action" data-status="draft" onClick={showStatus} aria-label="Show all draft posts"><strong>{statusCounts.draft}</strong><span>Drafts</span></button><button className="summary-item scheduled-action" data-status="scheduled" onClick={showStatus} aria-label="Show all scheduled posts"><strong>{statusCounts.scheduled}</strong><span>Scheduled</span></button><button className="summary-item scheduled-action" data-status="published" onClick={showStatus} aria-label="Show all live posts"><strong>{statusCounts.published}</strong><span>Live</span></button></div>

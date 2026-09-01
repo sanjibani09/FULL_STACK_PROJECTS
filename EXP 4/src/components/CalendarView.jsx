@@ -8,16 +8,28 @@ import { usePosts, useScheduleInsight } from '../context/PostContext';
 import { getSchedulingInsight } from '../data/schedulingInsights';
 import PostModal from './PostModal';
 
+moment.updateLocale('en', { week: { dow: 1, doy: 4 } });
 const localizer = momentLocalizer(moment);
 const DnDCalendar = (dndModule.default || dndModule)(Calendar);
-const viewLabels = { month: 'Month', week: 'Week', day: 'Day' };
 
-function OptimizedEvent({ event }) {
+const OptimizedEvent = memo(function OptimizedEvent({ event }) {
   return <span className="optimized-event"><span>{event.title}</span>{event.optimization && <b className={event.optimization.score}>{event.optimization.preference}</b>}</span>;
+}, (previous, next) => previous.event === next.event);
+
+function hasSameOptimization(previous, next) {
+  return previous && previous.preference === next.preference && previous.score === next.score &&
+    previous.label === next.label && previous.message === next.message &&
+    previous.conflicts.map((post) => post.id).join() === next.conflicts.map((post) => post.id).join() &&
+    previous.factors.every((factor, index) => factor.value === next.factors[index]?.value);
 }
 
-function buildOptimization(posts) {
-  const results = posts.map((post) => getSchedulingInsight(post, post.start, posts, post.end));
+function buildOptimization(posts, previousResults = []) {
+  const previousById = new Map(previousResults.map((result) => [result.id, result]));
+  const results = posts.map((post) => {
+    const nextResult = getSchedulingInsight(post, post.start, posts, post.end);
+    const previousResult = previousById.get(post.id);
+    return hasSameOptimization(previousResult, nextResult) ? previousResult : nextResult;
+  });
   return {
     results,
     summary: {
@@ -29,23 +41,47 @@ function buildOptimization(posts) {
   };
 }
 
+function isSameCalendarDay(first, second) {
+  return first.getFullYear() === second.getFullYear() && first.getMonth() === second.getMonth() && first.getDate() === second.getDate();
+}
+
 function CalendarView() {
   const { posts, reschedulePost, updatePost, deletePost, addPost } = usePosts();
   const { setScheduleInsight, calendarOptimization, setCalendarOptimization } = useScheduleInsight();
   const [selectedPost, setSelectedPost] = useState(null);
   const [modalMode, setModalMode] = useState(null);
-  const [view, setView] = useState('month');
   const [date, setDate] = useState(new Date());
   const optimizationTimer = useRef(null);
+  const optimizedEventCache = useRef(new Map());
+  const visiblePosts = useMemo(() => {
+    const weekStart = moment(date).startOf('isoWeek').toDate();
+    const weekEnd = moment(date).endOf('isoWeek').toDate();
+    return posts.filter((post) => new Date(post.start) <= weekEnd && new Date(post.end) >= weekStart);
+  }, [date, posts]);
   const optimizationById = useMemo(() => new Map(calendarOptimization.results.map((result) => [result.id, result])), [calendarOptimization.results]);
-  const events = useMemo(() => posts.map((post) => ({ ...post, title: post.title, optimization: calendarOptimization.enabled && !calendarOptimization.analyzing ? optimizationById.get(post.id) : null })), [calendarOptimization.analyzing, calendarOptimization.enabled, optimizationById, posts]);
+  const events = useMemo(() => {
+    if (!calendarOptimization.enabled || calendarOptimization.analyzing) {
+      optimizedEventCache.current.clear();
+      return visiblePosts.map((post) => ({ ...post, title: post.title, optimization: null }));
+    }
+    const activeIds = new Set(visiblePosts.map((post) => post.id));
+    for (const id of optimizedEventCache.current.keys()) if (!activeIds.has(id)) optimizedEventCache.current.delete(id);
+    return visiblePosts.map((post) => {
+      const optimization = optimizationById.get(post.id);
+      const cached = optimizedEventCache.current.get(post.id);
+      if (cached?.post === post && cached.optimization === optimization) return cached.event;
+      const event = { ...post, title: post.title, optimization };
+      optimizedEventCache.current.set(post.id, { post, optimization, event });
+      return event;
+    });
+  }, [calendarOptimization.analyzing, calendarOptimization.enabled, optimizationById, visiblePosts]);
 
   useEffect(() => () => window.clearTimeout(optimizationTimer.current), []);
   useEffect(() => {
     if (!calendarOptimization.enabled || calendarOptimization.analyzing) return;
-    const { results, summary } = buildOptimization(posts);
+    const { results, summary } = buildOptimization(visiblePosts, calendarOptimization.results);
     setCalendarOptimization({ enabled: true, analyzing: false, results, summary });
-  }, [calendarOptimization.analyzing, calendarOptimization.enabled, posts, setCalendarOptimization]);
+  }, [calendarOptimization.analyzing, calendarOptimization.enabled, setCalendarOptimization, visiblePosts]);
 
   const openCreate = useCallback((start = new Date()) => {
     const end = new Date(start);
@@ -64,21 +100,16 @@ function CalendarView() {
     closeModal();
   }, [addPost, closeModal, modalMode, posts, setScheduleInsight, updatePost]);
 
-  const assessMove = useCallback(({ event, start, end, allDay }) => {
+  const assessMove = useCallback(({ event, start, end }) => {
     const originalStart = new Date(event.start);
     const originalEnd = new Date(event.end);
     const newStart = new Date(start);
     let newEnd = new Date(end);
 
-    if (view === 'month' && (allDay || (newStart.getHours() === 0 && newStart.getMinutes() === 0))) {
-      newStart.setHours(originalStart.getHours(), originalStart.getMinutes(), 0, 0);
-      newEnd = new Date(newStart.getTime() + (originalEnd.getTime() - originalStart.getTime()));
-    }
-
     const eventWithPreference = { ...event, preferredStart: event.preferredStart || originalStart };
     reschedulePost(event.id, newStart, newEnd, eventWithPreference.preferredStart);
     setScheduleInsight(getSchedulingInsight(eventWithPreference, newStart, posts, newEnd));
-  }, [posts, reschedulePost, setScheduleInsight, view]);
+  }, [posts, reschedulePost, setScheduleInsight]);
 
   const handleDragStart = useCallback(({ event }) => setScheduleInsight(getSchedulingInsight(event, event.start, posts, event.end)), [posts, setScheduleInsight]);
 
@@ -90,18 +121,18 @@ function CalendarView() {
     }
     setCalendarOptimization({ enabled: true, analyzing: true, results: [], summary: null });
     optimizationTimer.current = window.setTimeout(() => {
-      const { results, summary } = buildOptimization(posts);
+      const { results, summary } = buildOptimization(visiblePosts);
       setCalendarOptimization({ enabled: true, analyzing: false, results, summary });
     }, 500);
-  }, [calendarOptimization.enabled, posts, setCalendarOptimization]);
+  }, [calendarOptimization.enabled, setCalendarOptimization, visiblePosts]);
 
     const clashIds = useMemo(() => {
     const clashing = new Set();
     const isSameDay = (a, b) =>
       a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
-    for (let i = 0; i < posts.length; i++) {
-      for (let j = i + 1; j < posts.length; j++) {
-        const a = posts[i], b = posts[j];
+    for (let i = 0; i < visiblePosts.length; i++) {
+      for (let j = i + 1; j < visiblePosts.length; j++) {
+        const a = visiblePosts[i], b = visiblePosts[j];
         const overlaps = new Date(a.start) < new Date(b.end) && new Date(b.start) < new Date(a.end);
         const sameDay = isSameDay(new Date(a.start), new Date(b.start));
         if (overlaps || sameDay) {
@@ -111,7 +142,7 @@ function CalendarView() {
       }
     }
     return clashing;
-  }, [posts]);
+  }, [visiblePosts]);
 
   const eventPropGetter = useCallback((event) => ({
     style: {
@@ -124,7 +155,28 @@ function CalendarView() {
     },
   }), [clashIds]);
 
-  const title = useMemo(() => moment(date).format(view === 'day' ? 'dddd, D MMMM' : 'MMMM YYYY'), [date, view]);
+  const title = useMemo(() => {
+    const weekStart = moment(date).startOf('isoWeek');
+    const weekEnd = moment(date).endOf('isoWeek');
+    return weekStart.month() === weekEnd.month()
+      ? `${weekStart.format('D')} - ${weekEnd.format('D MMMM YYYY')}`
+      : `${weekStart.format('D MMM')} - ${weekEnd.format('D MMM YYYY')}`;
+  }, [date]);
+  const weekDays = useMemo(() => {
+    const weekStart = moment(date).startOf('isoWeek');
+    return Array.from({ length: 7 }, (_, index) => {
+      const day = weekStart.clone().add(index, 'days');
+      const dayDate = day.toDate();
+      const dayPosts = visiblePosts.filter((post) => isSameCalendarDay(new Date(post.start), dayDate));
+      const scores = dayPosts.map((post) => optimizationById.get(post.id)?.preference).filter(Number.isFinite);
+      return { key: day.format('YYYY-MM-DD'), day, dayDate, posts: dayPosts.length, score: scores.length ? Math.round(scores.reduce((total, score) => total + score, 0) / scores.length) : null };
+    });
+  }, [date, optimizationById, visiblePosts]);
+  const openDayPlanner = useCallback((dayDate) => {
+    const start = new Date(dayDate);
+    start.setHours(9, 0, 0, 0);
+    openCreate(start);
+  }, [openCreate]);
   const selectEvent = useCallback((event) => { setSelectedPost(event); setModalMode('edit'); }, []);
   const selectSlot = useCallback(({ start }) => openCreate(start), [openCreate]);
   const deleteAndClose = useCallback((id) => { deletePost(id); closeModal(); }, [closeModal, deletePost]);
@@ -134,24 +186,24 @@ function CalendarView() {
       <div className="calendar-toolbar">
         <div>
           <h2 className="calendar-title">{title}</h2>
-          <p className="calendar-subtitle">{events.length} posts in your content plan</p>
+          <p className="calendar-subtitle">{events.length} posts in this 7-day plan</p>
         </div>
         <div className="calendar-actions">
           <div className="date-actions">
             <button onClick={() => setDate(new Date())}>Today</button>
-            <button aria-label="Previous period" onClick={() => setDate(moment(date).subtract(1, view).toDate())}>&lsaquo;</button>
-            <button aria-label="Next period" onClick={() => setDate(moment(date).add(1, view).toDate())}>&rsaquo;</button>
-          </div>
-          <div className="view-switcher">
-            {Object.entries(viewLabels).map(([key, label]) => (
-              <button key={key} className={view === key ? 'active' : ''} onClick={() => setView(key)}>{label}</button>
-            ))}
+            <button aria-label="Previous week" onClick={() => setDate(moment(date).subtract(1, 'week').toDate())}>&lsaquo;</button>
+            <button aria-label="Next week" onClick={() => setDate(moment(date).add(1, 'week').toDate())}>&rsaquo;</button>
           </div>
           <button className="add-post" onClick={() => openCreate()}>+ New post</button>
           <button className={`optimize-toggle ${calendarOptimization.enabled ? 'enabled' : ''} ${calendarOptimization.analyzing ? 'analyzing' : ''}`} onClick={toggleOptimization} aria-pressed={calendarOptimization.enabled}>
             <i aria-hidden="true" />{calendarOptimization.analyzing ? 'Analyzing...' : calendarOptimization.enabled ? 'Optimization on' : 'Optimize calendar'}
           </button>
         </div>
+      </div>
+      <div className="week-planner" aria-label="Seven day scheduling planner">
+        {weekDays.map((day) => <button key={day.key} className={`week-day-box ${isSameCalendarDay(day.dayDate, new Date()) ? 'today' : ''}`} onClick={() => openDayPlanner(day.dayDate)}>
+          <span>{day.day.format('ddd')}</span><strong>{day.day.format('D')}</strong><small>{day.posts ? `${day.posts} post${day.posts > 1 ? 's' : ''}` : 'Add post'}</small>{calendarOptimization.enabled && !calendarOptimization.analyzing && <b className={day.score >= 78 ? 'great' : day.score >= 55 ? 'fair' : 'poor'}>{day.score === null ? '--' : `${day.score}%`}</b>}
+        </button>)}
       </div>
       <div className="calendar-body">
         <DnDCalendar
@@ -166,9 +218,9 @@ function CalendarView() {
           step={15}
           timeslots={4}
           longPressThreshold={150}
-          view={view}
+          view="week"
+          views={['week']}
           date={date}
-          onView={setView}
           onNavigate={setDate}
           onDragStart={handleDragStart}
           onEventDrop={assessMove}
